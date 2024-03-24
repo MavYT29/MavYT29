@@ -1,0 +1,65 @@
+name: CI
+
+on: 
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    timeout-minutes: 525600  # Timeout set to 1 year (60 minutes * 24 hours * 365 days)
+
+    if: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && github.event_name != 'repository_dispatch' }}
+
+    steps:
+      - name: Download
+        run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+      - name: Extract
+        run: Expand-Archive ngrok.zip
+
+      - name: Auth
+        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+      - name: Enable TS
+        run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+
+      - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+
+      - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+
+      - name: Create Tunnel and Auto-save Data
+        run: |
+          $startTime = Get-Date
+          $endTime = $startTime.AddYears(1)  # Timeout set to 1 year
+          $saveInterval = New-TimeSpan -Minutes 30  # Adjust the interval for auto-saving as needed
+          $dataDirectory = "data"  # Directory to save data
+          New-Item -ItemType Directory -Force -Path $dataDirectory
+          
+          while ((Get-Date) -lt $endTime) {
+            # Create tunnel with Asia server
+            .\ngrok\ngrok.exe tcp 3389 --region=ap
+            
+            Write-Output "Tunnel process completed. Restarting..."
+            
+            # Save data
+            $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+            $dataFile = "$dataDirectory\data_$timestamp.txt"
+            # Example: Saving some data to a text file
+            "Auto-save data at $timestamp" | Out-File -FilePath $dataFile
+            Write-Output "Data saved to $dataFile"
+            
+            # Wait for auto-save interval
+            Start-Sleep -Seconds $saveInterval.TotalSeconds
+
+            # Check if current time exceeds end time
+            if ((Get-Date) -ge $endTime) {
+              Write-Output "Reached timeout. Disabling completion of the workflow."
+              exit 1  # Exit with non-zero code to indicate failure
+            }
+          }
